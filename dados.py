@@ -1,81 +1,75 @@
+# Importando as bibliotecas necessárias
 import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression, Lasso, Ridge
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.cross_decomposition import PLSRegression
 from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans, AgglomerativeClustering, DBSCAN
-from sklearn.metrics import silhouette_score, davies_bouldin_score
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+import matplotlib.pyplot as plt
 
-# Carregar os dados
-file_path = 'spotify-2023.csv'
-spotify_data = pd.read_csv(file_path, encoding='latin1')
+# Carregar o arquivo CSV
+file_path = 'ForExport.csv'  # Substituir pelo caminho correto do arquivo
+data = pd.read_csv(file_path)
 
-# Escolher as colunas para usar na análise
-numerical_columns = ['bpm', 'danceability_%', 'valence_%', 'energy_%', 
-                     'acousticness_%', 'instrumentalness_%', 'liveness_%', 'speechiness_%']
-spotify_numeric = spotify_data[numerical_columns]
+# Seleção de colunas numéricas e definição da variável alvo
+data_numeric = data.select_dtypes(include=['float64', 'int64']).dropna()
+target_column = 'JamsDelay'
+X = data_numeric.drop(target_column, axis=1)
+y = data_numeric[target_column]
 
-# Passo 1: Tratamento de Outliers usando IQR
-Q1 = spotify_numeric.quantile(0.25)
-Q3 = spotify_numeric.quantile(0.75)
-IQR = Q3 - Q1
-
-# Definindo os limites inferior e superior para detecção de outliers
-lower_bound = Q1 - 1.5 * IQR
-upper_bound = Q3 + 1.5 * IQR
-
-# Filtrando os dados para remover outliers
-spotify_no_outliers = spotify_numeric[~((spotify_numeric < lower_bound) | (spotify_numeric > upper_bound)).any(axis=1)]
-
-# Passo 2: Padronizar os dados originais e os dados sem outliers
+# Normalização e divisão em treino e teste
 scaler = StandardScaler()
-spotify_scaled = scaler.fit_transform(spotify_numeric)  # Dados originais padronizados
-spotify_scaled_no_outliers = scaler.fit_transform(spotify_no_outliers)  # Dados sem outliers padronizados
+X_scaled = scaler.fit_transform(X)
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.3, random_state=42)
 
-# Aplicar K-Means nos dados sem outliers
-kmeans = KMeans(n_clusters=3, random_state=42)
-kmeans_labels = kmeans.fit_predict(spotify_scaled_no_outliers)
+# Definição dos modelos
+models = {
+    'Linear Regression': LinearRegression(),
+    'PLS Regression': PLSRegression(n_components=2),
+    'Lasso Regression': Lasso(alpha=0.01),
+    'Ridge Regression': Ridge(alpha=0.5),
+    'Random Forest': RandomForestRegressor(n_estimators=100, max_depth=8, random_state=42),
+    'Decision Tree': DecisionTreeRegressor(max_depth=6, random_state=42)
+}
 
-# Aplicar Hierarchical Clustering e DBSCAN nos dados originais padronizados
-hierarchical = AgglomerativeClustering(n_clusters=3)
-hierarchical_labels = hierarchical.fit_predict(spotify_scaled)
+# Treinamento, predição e cálculo das métricas
+results = {'Model': [], 'RMSE': [], 'R2': [], 'MAPE': []}
+predictions = {}
 
-dbscan = DBSCAN(eps=1.5, min_samples=5)
-dbscan_labels = dbscan.fit_predict(spotify_scaled)
+for model_name, model in models.items():
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
 
-# Calcular as métricas de avaliação
-silhouette_kmeans = silhouette_score(spotify_scaled_no_outliers, kmeans_labels)
-davies_bouldin_kmeans = davies_bouldin_score(spotify_scaled_no_outliers, kmeans_labels)
+    # Armazenar métricas e previsões
+    results['Model'].append(model_name)
+    results['RMSE'].append(mean_squared_error(y_test, y_pred, squared=False))
+    results['R2'].append(r2_score(y_test, y_pred))
+    results['MAPE'].append(mean_absolute_error(y_test, y_pred) / abs(y_test.mean()) * 100)
+    predictions[model_name] = y_pred
 
-silhouette_hierarchical = silhouette_score(spotify_scaled, hierarchical_labels)
-davies_bouldin_hierarchical = davies_bouldin_score(spotify_scaled, hierarchical_labels)
+# Exibir resultados
+results_df = pd.DataFrame(results)
+print(results_df)
 
-if len(set(dbscan_labels)) > 1:  # Verificar se há mais de um cluster
-    silhouette_dbscan = silhouette_score(spotify_scaled, dbscan_labels)
-    davies_bouldin_dbscan = davies_bouldin_score(spotify_scaled, dbscan_labels)
-else:
-    silhouette_dbscan = None
-    davies_bouldin_dbscan = None
+# Selecionar 30 amostras e criar gráfico de comparação
+y_test_limited = y_test[:30]
+predictions_limited = {model_name: y_pred[:30] for model_name, y_pred in predictions.items()}
 
-# Mostrar as métricas
-print("Métricas de Avaliação:")
-print(f"K-Means (com tratamento de outliers): Silhouette = {silhouette_kmeans:.3f}, Davies-Bouldin = {davies_bouldin_kmeans:.3f}")
-print(f"Hierarchical: Silhouette = {silhouette_hierarchical:.3f}, Davies-Bouldin = {davies_bouldin_hierarchical:.3f}")
-print(f"DBSCAN: Silhouette = {silhouette_dbscan}, Davies-Bouldin = {davies_bouldin_dbscan}")
+plt.figure(figsize=(10, 6))
+plt.plot(y_test_limited.values, label='Real', marker='o', color='blue', linewidth=3, markersize=8)
 
-# Escolher o melhor algoritmo e calcular as estatísticas descritivas
-spotify_data['Cluster'] = hierarchical_labels
-cluster_stats = spotify_data.groupby('Cluster').agg({
-    'bpm': ['mean', 'median', 'std'],
-    'danceability_%': ['mean', 'median', 'std'],
-    'valence_%': ['mean', 'median', 'std'],
-    'energy_%': ['mean', 'median', 'std'],
-    'acousticness_%': ['mean', 'median', 'std'],
-    'instrumentalness_%': ['mean', 'median', 'std'],
-    'liveness_%': ['mean', 'median', 'std'],
-    'speechiness_%': ['mean', 'median', 'std']
-})
+# Adicionar cores, estilo e aumentar espessura das linhas para visibilidade
+colors = ['orange', 'green', 'red', 'purple', 'cyan', 'magenta']
+markers = ['x', 'd', 's', 'v', '^', 'P']  # Diferentes marcadores para cada modelo
+for idx, (model_name, y_pred) in enumerate(predictions_limited.items()):
+    plt.plot(y_pred, label=model_name, color=colors[idx], linewidth=2, marker=markers[idx], markersize=8)
 
-# Organizando a tabela
-cluster_stats = cluster_stats.round(2)
-cluster_stats.columns = ['_'.join(col).strip() for col in cluster_stats.columns.values]
-
-print("\nEstatísticas Descritivas por Cluster:")
-print(cluster_stats)
+plt.xlabel('Amostras')
+plt.ylabel('Valor')
+plt.legend()
+plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+plt.title('Comparação de Modelos na Porção de Teste')
+plt.show()
